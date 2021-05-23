@@ -1,0 +1,115 @@
+;; Run me in http://quil.info/sketches/create
+(ns my.core
+  (:require [quil.core :as q :include-macros true]
+            [quil.middleware :as m]))
+
+;; CHANGE THIS TO MAKE THINGS MESSIER (increase number) OR LESS (decrease)
+(def NOISE-LEVEL 0.41)
+;; STOP CHANGING THINGS!!!
+
+(defn rnorm
+  "take 2 numbers in [0, 1] and return a normally (mu=0, std=1) distributed one
+  see https://en.wikipedia.org/wiki/Box%E2%80%93Muller_transform#Basic_form"
+  [u1 u2]
+  (* (q/sqrt (* -2 (q/log u1)))
+     (q/cos (* q/TWO-PI u2))))
+
+(defn rnd [] (* NOISE-LEVEL (rnorm (rand) (rand))))
+
+(defn setup []
+  (q/frame-rate 60)
+  (q/color-mode :hsb)
+  {:color 0
+   :angle (* -0.5 q/PI)
+   :size 50
+   :X 0
+   :Y 0
+   :x-clean 0
+   :y-clean 0
+   :x 0
+   :y 0
+   :history []
+   :brush-height (+ 3 (rand-int 10))})
+
+(defn update-state
+  "randomness:
+  1. different \"spots\" on the brush are touching or not (less with time + noise)
+  2. the circe the artists' hand is following is not perfect (noise).
+  3. the ink becomes slightly lighter as the circle advances (thiner layer),
+    with noise.
+  4. The painter tries to correct the deviation from the intended circle, in
+    a gravity-like way, which also has its own randomness."
+  [state]
+  (let [{:keys [color angle size X Y x y history]} state
+        ;; noise
+        X (+ X (rnd))
+        Y (+ Y (rnd))
+        ;; data
+        color (min (+ color 0.19 (* 3 (rnd))) 240)
+        angle (mod (+ angle 0.01) q/TWO-PI)
+        size (max 0 (- size 0.035 (rnd)))
+        x-clean (* 150 (q/cos angle))
+        y-clean (* 150 (q/sin angle))
+        x (+ x-clean X)
+        y (+ y-clean Y)
+        history (conj history [x y size color])]
+    (if (and (< 400 (count history)) (>= angle (* 1.4 q/PI)))
+      (assoc state :done true)     ; stop after a full circle is reached FIXME: maybe look at x too?
+      (conj state
+            {:color color
+             :angle angle
+             :size size
+             :x-clean x-clean
+             :y-clean y-clean
+             :X X
+             :Y Y
+             :x x
+             :y y
+             :history history}))))
+
+(defn draw-state [state]
+   (q/color-mode :rgb 255)
+   (q/background 236 229 218)
+  ;(q/background 240)
+  (let [{:keys [X Y x-clean y-clean x y history angle done size color brush-height]} state]
+    (doseq [[x y size h-color] history]
+      (q/with-stroke [h-color]
+        (q/with-fill [h-color]
+          (q/ellipse (+ 250 x) (+ 250 y) size brush-height))))
+    (q/with-translation [(/ (q/width) 2) (/ (q/height) 2)]
+      (when-not done
+        ;; "perfect" circle
+        (q/with-fill [nil]
+          (q/with-stroke ["gray"]
+            (q/ellipse 0 0 300 300)
+            (q/ellipse x-clean y-clean 50 50)))
+        ;; the center
+        ;; (q/with-fill ["blue"]
+        ;;   (q/text "O" 0 0))
+        ;; ;; "brush"
+        ;; (q/ellipse x y size size)
+        ;; errors dashboard
+        (q/text (str (Math/round X)) X 0)
+        (q/text (str (Math/round Y)) 0 Y)))
+      ;; telemetry :)
+    (when-not done
+      (q/with-fill [100]
+        (q/text (str "color: " color) 10 10)
+        (q/text (str "(q/current-frame-rate) = "
+                     (int (q/current-frame-rate)))
+                10 30))
+      (q/with-fill [color]
+        (q/ellipse 10 110 20 20))
+      (q/with-fill ["green"]
+        (q/text (str "step: " (count history)
+                     "  color: " color
+                     " size: " size)
+                10 50)))))
+
+(q/defsketch my
+  :host "host"
+  :size [500 500]
+  :setup setup
+  :update update-state
+  :draw draw-state
+  :middleware [m/fun-mode])
